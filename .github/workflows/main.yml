@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -24,64 +23,95 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 9.3.1
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Find Project ZIP
+      - name: Find ZIP
         shell: bash
         run: |
-          set -e
-
-          ZIP_FILE=$(find . -type f -name "*.zip" ! -path "./.git/*" | head -n 1)
+          ZIP_FILE=$(find . -type f -name '*.zip' ! -path './.git/*' | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found."
+            echo "ERROR: ZIP not found"
             exit 1
           fi
 
-          echo "ZIP FOUND: $ZIP_FILE"
+          echo "Found ZIP: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-      - name: Extract Project
+      - name: Extract ZIP
         shell: bash
         run: |
-          set -e
-
           rm -rf project
           mkdir -p project
-
           unzip -o "$ZIP_FILE" -d project
 
-      - name: Locate Android Project
+      - name: Find Android Project
         shell: bash
         run: |
-          set -e
-
-          SETTINGS=$(find project -type f -name "settings.gradle*" | head -n 1)
+          SETTINGS=$(find project -type f -name 'settings.gradle*' | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: Android project not found."
-            find project -maxdepth 6 -type f | head -200
+            echo "ERROR: Android project not found"
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Android project: $PROJECT_DIR"
+          echo "Project: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Remove Google Services
         shell: bash
         run: |
-          find "$PROJECT_DIR" -type f -name "google-services.json" -delete || true
+          find "$PROJECT_DIR" -type f -name 'google-services.json' -delete || true
 
       - name: Create Debug Keystore
         shell: bash
         run: |
-          set -e
-
           KEYSTORE="$PROJECT_DIR/debug.keystore"
 
-          rm -f "$KEYSTORE
+          rm -f "$KEYSTORE"
+
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass android \
+            -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          echo "Keystore created successfully"
+
+      - name: Build IGNITEX
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          gradle assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            -x :app:processDebugGoogleServices
+
+      - name: Find APK
+        shell: bash
+        run: |
+          APK=$(find "$PROJECT_DIR" -type f -name '*.apk' | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found"
+            exit 1
+          fi
+
+          echo "APK: $APK"
+          cp "$APK" "$GITHUB_WORKSPACE/IGNITEX.apk"
+
+      - name: Upload IGNITEX APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: IGNITEX-APK
+          path: IGNITEX.apk
+          if-no-files-found: error
